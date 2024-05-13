@@ -1,8 +1,10 @@
-from modelgauge.annotator import CompletionAnnotator
+from modelgauge.annotator import CompletionAnnotator, ConfigDescription, RequiredConfig
 from modelgauge.single_turn_prompt_response import PromptWithContext
 from modelgauge.sut import SUTCompletion
 from modelgauge.suts.together_client import (
     TogetherApiKey,
+    TogetherChatRequest,
+    TogetherChatResponse,
     TogetherCompletionsRequest,
     TogetherCompletionsResponse,
     TogetherCompletionsSUT,
@@ -13,6 +15,14 @@ from pydantic import BaseModel
 from string import Template
 from typing import Callable, Dict, List, Optional
 
+
+class LlamaGuardProvider(RequiredConfig):
+    @classmethod
+    def description(cls) -> ConfigDescription:
+        return ConfigDescription(
+            scope="llama-guard",
+            key="provider",
+        )
 
 class LlamaGuardAnnotation(BaseModel):
     is_safe: bool
@@ -225,6 +235,7 @@ class LlamaGuardAnnotator(CompletionAnnotator[LlamaGuardAnnotation]):
 
     def __init__(
         self,
+        provider: LlamaGuardProvider,
         together_api_key: TogetherApiKey,
         formatter: Optional[Callable[[str, LlamaGuardData], str]] = None,
         decoder: Optional[Dict[str, str]] = None,
@@ -233,14 +244,13 @@ class LlamaGuardAnnotator(CompletionAnnotator[LlamaGuardAnnotation]):
         self.llama_guard_data = _LLAMA_GUARD_MAP[llama_guard_version]
         self.model_name = self.llama_guard_data.model_name
         self.formatter = _default_formatter if formatter is None else formatter
-        self.model = TogetherCompletionsSUT(
-            "annotator", self.model_name, together_api_key
-        )
+        self.model = _make_llamaguard_model(self.model_name, provider, together_api_key)
         self.decoder = (
             _make_llamaguard_mapping(self.llama_guard_data)
             if decoder is None
             else decoder
         )
+
 
     def translate_request(
         self, prompt: PromptWithContext, completion: SUTCompletion
@@ -277,6 +287,10 @@ class LlamaGuardAnnotator(CompletionAnnotator[LlamaGuardAnnotation]):
         else:
             raise AssertionError("Unexpected response: ", response.choices[0].text)
 
+class MockLlamaGuardProviderSUT:
+
+    def evaluate(self, request: TogetherChatRequest) -> TogetherChatResponse:
+        return _make_response("safe")
 
 def _default_formatter(message, llama_guard):
     categories_str = "\n".join(
@@ -292,12 +306,32 @@ def _default_formatter(message, llama_guard):
         conversations=conversations_str,
     )
 
+def _make_llamaguard_model(model_name, provider, together_api_key):
+    if provider.value == "llama_guard_together":
+        return TogetherCompletionsSUT(
+            "annotator", model_name, together_api_key
+        )
+    if provider.value == "llama_guard_mock":
+        return MockLlamaGuardProviderSUT()
+
 
 def _make_llamaguard_mapping(llama_guard):
     return {
         shorthand: category.name
         for shorthand, category in llama_guard.category_map.items()
     }
+
+def _make_response(text: str) -> TogetherCompletionsResponse:
+    return TogetherCompletionsResponse(
+        id="some-id",
+        choices=[TogetherCompletionsResponse.Choice(text=text)],
+        usage=TogetherCompletionsResponse.Usage(
+            prompt_tokens=11, completion_tokens=12, total_tokens=13
+        ),
+        created=99,
+        model="some-model",
+        object="some-object",
+    )
 
 
 if __name__ == "__main__":

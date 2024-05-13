@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "modelgauge-llama-guard"
+version = "0.5.1"
+description = ""
+authors = ["MLCommons AI Safety <ai-safety-engineering@mlcommons.org>"]
+readme = "README.md"
+packages = [{include = "modelgauge"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+modelgauge_together = {version = "*"}
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -1,10 +1,11 @@
 import csv
 from enum import Enum
 from modelgauge.aggregations import get_measurement_stats_by_key
-from modelgauge.annotator import Annotator
+from modelgauge.annotator import Annotator, InjectAnnotator
 from modelgauge.annotators.llama_guard_annotator import (
     LlamaGuardAnnotation,
     LlamaGuardAnnotator,
+    LlamaGuardProvider,
     LlamaGuardVersion,
 )
 from modelgauge.base_test import PromptResponseTest
@@ -64,6 +65,7 @@ class SafeTest(PromptResponseTest):
         hazard: str,
         folder_name: str,
         together_api_key: TogetherApiKey,
+        provider: LlamaGuardProvider,
         persona_types: List[PersonaType],
         llama_guard_version: LlamaGuardVersion = LlamaGuardVersion.VERSION_2,
     ):
@@ -73,6 +75,7 @@ class SafeTest(PromptResponseTest):
         self.hazard_name = HAZARDS_MAPPING[hazard]
         self.folder_name = folder_name
         self.together_api_key = together_api_key
+        self.provider = provider
         assert len(persona_types), "At least one persona type must be specified."
         assert len(set(persona_types)) == len(
             persona_types
@@ -127,7 +130,7 @@ class SafeTest(PromptResponseTest):
     def get_annotators(self) -> Mapping[str, Annotator]:
         return {
             "llama_guard": LlamaGuardAnnotator(
-                self.together_api_key, llama_guard_version=self.llama_guard_version
+                self.provider, self.together_api_key, llama_guard_version=self.llama_guard_version
             )
         }
 
@@ -159,6 +162,7 @@ class SafeTest(PromptResponseTest):
 
 FOLDER_NAME = "data_04apr2024"
 API_KEY_SECRET = InjectSecret(TogetherApiKey)
+ANNOTATOR = InjectAnnotator(LlamaGuardProvider)
 
 TESTS.register(
     SafeTest,
@@ -166,6 +170,7 @@ TESTS.register(
     "cae",
     FOLDER_NAME,
     API_KEY_SECRET,
+    ANNOTATOR,
     persona_types=[PersonaType.TYPICAL, PersonaType.MALICIOUS],
 )
 TESTS.register(
@@ -174,6 +179,7 @@ TESTS.register(
     "cbr",
     FOLDER_NAME,
     API_KEY_SECRET,
+    ANNOTATOR,
     persona_types=[PersonaType.TYPICAL, PersonaType.MALICIOUS],
 )
 TESTS.register(
@@ -182,6 +188,7 @@ TESTS.register(
     "hat",
     FOLDER_NAME,
     API_KEY_SECRET,
+    ANNOTATOR,
     persona_types=[PersonaType.TYPICAL, PersonaType.MALICIOUS],
 )
 TESTS.register(
@@ -190,6 +197,7 @@ TESTS.register(
     "nvc",
     FOLDER_NAME,
     API_KEY_SECRET,
+    ANNOTATOR,
     persona_types=[PersonaType.TYPICAL, PersonaType.MALICIOUS],
 )
 TESTS.register(
@@ -198,6 +206,7 @@ TESTS.register(
     "scr",
     FOLDER_NAME,
     API_KEY_SECRET,
+    ANNOTATOR,
     persona_types=[PersonaType.TYPICAL, PersonaType.MALICIOUS],
 )
 TESTS.register(
@@ -206,6 +215,7 @@ TESTS.register(
     "ssh",
     FOLDER_NAME,
     API_KEY_SECRET,
+    ANNOTATOR,
     persona_types=[PersonaType.TYPICAL, PersonaType.VULNERABLE],
 )
 TESTS.register(
@@ -214,5 +224,6 @@ TESTS.register(
     "vcr",
     FOLDER_NAME,
     API_KEY_SECRET,
+    ANNOTATOR,
     persona_types=[PersonaType.TYPICAL, PersonaType.MALICIOUS],
 )
