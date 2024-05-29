@@ -92,7 +92,7 @@ class Annotator(TrackedObject, ABC):
     pass
 
 
-class InjectAnnotator(Injector, Generic[AnnotatorType]):
+class InjectAnnotatorProvider(Injector, Generic[AnnotatorType]):
     def __init__(self, annotator_class: Type[AnnotatorType]):
         self.annotator_class = annotator_class
 
@@ -100,7 +100,7 @@ class InjectAnnotator(Injector, Generic[AnnotatorType]):
         return self.annotator_class.make(annotators_config)
 
     def __repr__(self):
-        return f"InjectAnnotator({self.annotator_class.__name__})"
+        return f"InjectAnnotatorProvider({self.annotator_class.__name__})"
 
 class CompletionAnnotator(Annotator, Generic[AnnotationType]):
     """Annotator that examines a single prompt+completion pair at a time.

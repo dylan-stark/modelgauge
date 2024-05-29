@@ -462,3 +462,11 @@ CHAT_MODELS = {
 }
 for uid, model_name in CHAT_MODELS.items():
     SUTS.register(TogetherChatSUT, uid, model_name, InjectSecret(TogetherApiKey))
+
+# Evaluator
+EVALUATOR_MODELS = {
+    "llama-guard-1-7b": "Meta-Llama/Llama-Guard-7b",
+    "llama-guard-2-8b": "meta-llama/LlamaGuard-2-8b",
+}
+for uid, model_name in EVALUATOR_MODELS.items():
+    SUTS.register(TogetherChatSUT, uid, model_name, InjectSecret(TogetherApiKey))

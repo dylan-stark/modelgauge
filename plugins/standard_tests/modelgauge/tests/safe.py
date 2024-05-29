@@ -1,7 +1,7 @@
 import csv
 from enum import Enum
 from modelgauge.aggregations import get_measurement_stats_by_key
-from modelgauge.annotator import Annotator, InjectAnnotator
+from modelgauge.annotator import Annotator, InjectAnnotatorProvider
 from modelgauge.annotators.llama_guard_annotator import (
     LlamaGuardAnnotation,
     LlamaGuardAnnotator,
@@ -12,7 +12,6 @@ from modelgauge.base_test import PromptResponseTest
 from modelgauge.dependency_helper import DependencyHelper
 from modelgauge.external_data import ExternalData, GDriveData
 from modelgauge.prompt import SUTOptions, TextPrompt
-from modelgauge.secret_values import InjectSecret
 from modelgauge.single_turn_prompt_response import (
     MeasuredTestItem,
     PromptWithContext,
@@ -20,7 +19,6 @@ from modelgauge.single_turn_prompt_response import (
     TestItemAnnotations,
 )
 from modelgauge.sut_capabilities import AcceptsTextPrompt
-from modelgauge.suts.together_client import TogetherApiKey
 from modelgauge.test_decorator import modelgauge_test
 from modelgauge.test_registry import TESTS
 from pydantic import BaseModel
@@ -64,7 +62,6 @@ class SafeTest(PromptResponseTest):
         uid: str,
         hazard: str,
         folder_name: str,
-        together_api_key: TogetherApiKey,
         provider: LlamaGuardProvider,
         persona_types: List[PersonaType],
         llama_guard_version: LlamaGuardVersion = LlamaGuardVersion.VERSION_2,
@@ -74,7 +71,6 @@ class SafeTest(PromptResponseTest):
         self.hazard = hazard
         self.hazard_name = HAZARDS_MAPPING[hazard]
         self.folder_name = folder_name
-        self.together_api_key = together_api_key
         self.provider = provider
         assert len(persona_types), "At least one persona type must be specified."
         assert len(set(persona_types)) == len(
@@ -128,9 +124,14 @@ class SafeTest(PromptResponseTest):
         return test_items
 
     def get_annotators(self) -> Mapping[str, Annotator]:
+        """Gets all of the annotators for this test.
+        
+        These safe(ty) tests use LlamaGuard, which has a concrete implementation
+        provided by whatever plugin is registered at `modelguage.annotator.llama_guard_annotator`.
+        """
         return {
             "llama_guard": LlamaGuardAnnotator(
-                self.provider, self.together_api_key, llama_guard_version=self.llama_guard_version
+                self.provider, llama_guard_version=self.llama_guard_version
             )
         }
 
@@ -161,16 +162,14 @@ class SafeTest(PromptResponseTest):
 
 
 FOLDER_NAME = "data_04apr2024"
-API_KEY_SECRET = InjectSecret(TogetherApiKey)
-ANNOTATOR = InjectAnnotator(LlamaGuardProvider)
+ANNOTATOR_PROVIDER = InjectAnnotatorProvider(LlamaGuardProvider)
 
 TESTS.register(
     SafeTest,
     "safe-cae",
     "cae",
     FOLDER_NAME,
-    API_KEY_SECRET,
-    ANNOTATOR,
+    ANNOTATOR_PROVIDER,
     persona_types=[PersonaType.TYPICAL, PersonaType.MALICIOUS],
 )
 TESTS.register(
@@ -178,8 +177,7 @@ TESTS.register(
     "safe-cbr",
     "cbr",
     FOLDER_NAME,
-    API_KEY_SECRET,
-    ANNOTATOR,
+    ANNOTATOR_PROVIDER,
     persona_types=[PersonaType.TYPICAL, PersonaType.MALICIOUS],
 )
 TESTS.register(
@@ -187,8 +185,7 @@ TESTS.register(
     "safe-hat",
     "hat",
     FOLDER_NAME,
-    API_KEY_SECRET,
-    ANNOTATOR,
+    ANNOTATOR_PROVIDER,
     persona_types=[PersonaType.TYPICAL, PersonaType.MALICIOUS],
 )
 TESTS.register(
@@ -196,8 +193,7 @@ TESTS.register(
     "safe-nvc",
     "nvc",
     FOLDER_NAME,
-    API_KEY_SECRET,
-    ANNOTATOR,
+    ANNOTATOR_PROVIDER,
     persona_types=[PersonaType.TYPICAL, PersonaType.MALICIOUS],
 )
 TESTS.register(
@@ -205,8 +201,7 @@ TESTS.register(
     "safe-scr",
     "scr",
     FOLDER_NAME,
-    API_KEY_SECRET,
-    ANNOTATOR,
+    ANNOTATOR_PROVIDER,
     persona_types=[PersonaType.TYPICAL, PersonaType.MALICIOUS],
 )
 TESTS.register(
@@ -214,8 +209,7 @@ TESTS.register(
     "safe-ssh",
     "ssh",
     FOLDER_NAME,
-    API_KEY_SECRET,
-    ANNOTATOR,
+    ANNOTATOR_PROVIDER,
     persona_types=[PersonaType.TYPICAL, PersonaType.VULNERABLE],
 )
 TESTS.register(
@@ -223,7 +217,6 @@ TESTS.register(
     "safe-vcr",
     "vcr",
     FOLDER_NAME,
-    API_KEY_SECRET,
-    ANNOTATOR,
+    ANNOTATOR_PROVIDER,
     persona_types=[PersonaType.TYPICAL, PersonaType.MALICIOUS],
 )

@@ -1,19 +1,50 @@
-from modelgauge.annotator import CompletionAnnotator, ConfigDescription, RequiredConfig
+import re
+from modelbench.modelgauge_runner import ModelGaugeAnnotator, ModelGaugeSut, SutDescription
+from modelgauge.annotator import CompletionAnnotator, ConfigDescription, InjectAnnotatorProvider, RequiredConfig
+from modelgauge.config import load_secrets_from_config
 from modelgauge.single_turn_prompt_response import PromptWithContext
 from modelgauge.sut import SUTCompletion
-from modelgauge.suts.together_client import (
-    TogetherApiKey,
-    TogetherChatRequest,
-    TogetherChatResponse,
-    TogetherCompletionsRequest,
-    TogetherCompletionsResponse,
-    TogetherCompletionsSUT,
-)
+from modelgauge.sut_registry import SUTS
 from dataclasses import dataclass
 from enum import Enum
 from pydantic import BaseModel
 from string import Template
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Protocol
+
+
+class LlamaGuardCompletionsRequest(Protocol):
+    model: str
+    prompt: str
+    max_tokens: int
+    stop: Optional[List[str]] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    repetition_penalty: Optional[float] = None
+    n: Optional[int] = None  # How many completions.
+    logprobs: Optional[int] = None
+
+class LogProbs(BaseModel):
+    tokens: List[str]
+    token_logprobs: List[float]
+
+class LlamaGuardCompletionsResponse(Protocol):
+
+    class Choice(BaseModel):
+        text: str
+        logprobs: Optional[LogProbs] = None
+
+    class Usage(BaseModel):
+        prompt_tokens: int
+        completion_tokens: int
+        total_tokens: int
+
+    id: str
+    choices: List[Choice]
+    usage: Usage
+    created: int
+    model: str
+    object: str
 
 
 class LlamaGuardProvider(RequiredConfig):
@@ -236,7 +267,6 @@ class LlamaGuardAnnotator(CompletionAnnotator[LlamaGuardAnnotation]):
     def __init__(
         self,
         provider: LlamaGuardProvider,
-        together_api_key: TogetherApiKey,
         formatter: Optional[Callable[[str, LlamaGuardData], str]] = None,
         decoder: Optional[Dict[str, str]] = None,
         llama_guard_version: LlamaGuardVersion = LlamaGuardVersion.VERSION_2,
@@ -244,7 +274,7 @@ class LlamaGuardAnnotator(CompletionAnnotator[LlamaGuardAnnotation]):
         self.llama_guard_data = _LLAMA_GUARD_MAP[llama_guard_version]
         self.model_name = self.llama_guard_data.model_name
         self.formatter = _default_formatter if formatter is None else formatter
-        self.model = _make_llamaguard_model(self.model_name, provider, together_api_key)
+        self.model = _make_llamaguard_model(self.model_name, provider)
         self.decoder = (
             _make_llamaguard_mapping(self.llama_guard_data)
             if decoder is None
@@ -254,9 +284,16 @@ class LlamaGuardAnnotator(CompletionAnnotator[LlamaGuardAnnotation]):
 
     def translate_request(
         self, prompt: PromptWithContext, completion: SUTCompletion
-    ) -> TogetherCompletionsRequest:
+    ) -> LlamaGuardCompletionsRequest:
+        """Translates generic request into a request to the provider.
+        
+        Whichever provider we're using should be responsible for the
+        actual translation. For example, you could imagine the request
+        API for Together.ai could be different than that of HuggingFace.
+        """
         # TODO Consider giving more than just the agent's response
-        return TogetherCompletionsRequest(
+        return self.model.translate_text_prompt(completion)
+        return self.model.make_provider_completions_request(
             prompt=self.formatter(completion.text, self.llama_guard_data),
             model=self.model_name,
             # This might need to be dynamic if the decoder is complicated.
@@ -265,13 +302,13 @@ class LlamaGuardAnnotator(CompletionAnnotator[LlamaGuardAnnotation]):
         )
 
     def annotate(
-        self, annotation_request: TogetherCompletionsRequest
-    ) -> TogetherCompletionsResponse:
+        self, annotation_request: LlamaGuardCompletionsRequest
+    ) -> LlamaGuardCompletionsResponse:
         """Returns an annotation for a single TestItem's interactions."""
         return self.model.evaluate(annotation_request)
 
     def translate_response(
-        self, request: TogetherCompletionsRequest, response: TogetherCompletionsResponse
+        self, request: LlamaGuardCompletionsRequest, response: LlamaGuardCompletionsResponse
     ) -> LlamaGuardAnnotation:
         assert len(response.choices) == 1
         lines = response.choices[0].text.split()
@@ -287,11 +324,6 @@ class LlamaGuardAnnotator(CompletionAnnotator[LlamaGuardAnnotation]):
         else:
             raise AssertionError("Unexpected response: ", response.choices[0].text)
 
-class MockLlamaGuardProviderSUT:
-
-    def evaluate(self, request: TogetherChatRequest) -> TogetherChatResponse:
-        return _make_response("safe")
-
 def _default_formatter(message, llama_guard):
     categories_str = "\n".join(
         [
@@ -306,13 +338,46 @@ def _default_formatter(message, llama_guard):
         conversations=conversations_str,
     )
 
-def _make_llamaguard_model(model_name, provider, together_api_key):
+def find_suts_for_sut_argument(sut_args: List[str]):
+    if sut_args:
+        suts = []
+        default_annotators_by_key = {a.key: a for a in ModelGaugeAnnotator}
+        default_suts_by_key = {s.key: s for s in ModelGaugeSut}
+        registered_sut_keys = set(i[0] for i in SUTS.items())
+        for sut_arg in sut_args:
+            if sut_arg in default_suts_by_key:
+                suts.append(default_suts_by_key[sut_arg])
+            elif sut_arg in registered_sut_keys:
+                suts.append(SutDescription(sut_arg, re.sub(r"[-_]+", " ", sut_arg)))
+            else:
+                # all_sut_keys = registered_sut_keys.union(set(default_suts_by_key.keys()))
+                # raise KeyError(
+                #     f"Unknown key '{sut_arg}'. Valid options are {sorted(all_sut_keys, key=lambda x:x.lower())}",
+                # )
+                return None
+    else:
+        suts = ModelGaugeSut
+    return suts
+
+def _make_llamaguard_model(model_name, provider):
+    """Makes "provided endpoint" for LlamaGuard."""
+    # TODO: Decide if this would be useful somewhere else
+    # NOTE: This should be "find providers ..."
+    sut = find_suts_for_sut_argument([provider.value]).pop()
+    secrets = load_secrets_from_config()
+    sut_instance = SUTS.make_instance(sut.key, secrets=secrets)
     if provider.value == "llama_guard_together":
-        return TogetherCompletionsSUT(
-            "annotator", model_name, together_api_key
+        from modelgauge.annotators.providers.together_provider import TogetherProvider
+
+        secrets = load_secrets_from_config()
+        return TogetherProvider(
+            "annotator", model_name, secrets
         )
     if provider.value == "llama_guard_mock":
-        return MockLlamaGuardProviderSUT()
+        from modelgauge.annotators.providers.mock_provider import MockProvider
+
+        return MockProvider()
+    return sut_instance
 
 
 def _make_llamaguard_mapping(llama_guard):
@@ -320,18 +385,6 @@ def _make_llamaguard_mapping(llama_guard):
         shorthand: category.name
         for shorthand, category in llama_guard.category_map.items()
     }
-
-def _make_response(text: str) -> TogetherCompletionsResponse:
-    return TogetherCompletionsResponse(
-        id="some-id",
-        choices=[TogetherCompletionsResponse.Choice(text=text)],
-        usage=TogetherCompletionsResponse.Usage(
-            prompt_tokens=11, completion_tokens=12, total_tokens=13
-        ),
-        created=99,
-        model="some-model",
-        object="some-object",
-    )
 
 
 if __name__ == "__main__":
@@ -343,7 +396,7 @@ if __name__ == "__main__":
 
     text = sys.argv[1]
 
-    annotator = LlamaGuardAnnotator(TogetherApiKey.make(secrets))
+    annotator = LlamaGuardAnnotator(provider=InjectAnnotatorProvider(LlamaGuardProvider))
     prompt = PromptWithContext(prompt=TextPrompt(text="not used"), source_id=None)
     completion = SUTCompletion(text=text)
     request = annotator.translate_request(prompt, completion)
