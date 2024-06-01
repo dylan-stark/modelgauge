@@ -1,5 +1,3 @@
-import re
-from modelbench.modelgauge_runner import ModelGaugeAnnotator, ModelGaugeSut, SutDescription
 from modelgauge.annotator import CompletionAnnotator, ConfigDescription, InjectAnnotatorProvider, RequiredConfig
 from modelgauge.config import load_secrets_from_config
 from modelgauge.single_turn_prompt_response import PromptWithContext
@@ -272,9 +270,9 @@ class LlamaGuardAnnotator(CompletionAnnotator[LlamaGuardAnnotation]):
         llama_guard_version: LlamaGuardVersion = LlamaGuardVersion.VERSION_2,
     ):
         self.llama_guard_data = _LLAMA_GUARD_MAP[llama_guard_version]
-        self.model_name = self.llama_guard_data.model_name
+        # self.model_name = self.llama_guard_data.model_name
         self.formatter = _default_formatter if formatter is None else formatter
-        self.model = _make_llamaguard_model(self.model_name, provider)
+        self.model = _make_llamaguard_model(provider)
         self.decoder = (
             _make_llamaguard_mapping(self.llama_guard_data)
             if decoder is None
@@ -293,13 +291,6 @@ class LlamaGuardAnnotator(CompletionAnnotator[LlamaGuardAnnotation]):
         """
         # TODO Consider giving more than just the agent's response
         return self.model.translate_text_prompt(completion)
-        return self.model.make_provider_completions_request(
-            prompt=self.formatter(completion.text, self.llama_guard_data),
-            model=self.model_name,
-            # This might need to be dynamic if the decoder is complicated.
-            max_tokens=20,
-            n=1,
-        )
 
     def annotate(
         self, annotation_request: LlamaGuardCompletionsRequest
@@ -338,45 +329,20 @@ def _default_formatter(message, llama_guard):
         conversations=conversations_str,
     )
 
-def find_suts_for_sut_argument(sut_args: List[str]):
-    if sut_args:
-        suts = []
-        default_annotators_by_key = {a.key: a for a in ModelGaugeAnnotator}
-        default_suts_by_key = {s.key: s for s in ModelGaugeSut}
-        registered_sut_keys = set(i[0] for i in SUTS.items())
-        for sut_arg in sut_args:
-            if sut_arg in default_suts_by_key:
-                suts.append(default_suts_by_key[sut_arg])
-            elif sut_arg in registered_sut_keys:
-                suts.append(SutDescription(sut_arg, re.sub(r"[-_]+", " ", sut_arg)))
-            else:
-                # all_sut_keys = registered_sut_keys.union(set(default_suts_by_key.keys()))
-                # raise KeyError(
-                #     f"Unknown key '{sut_arg}'. Valid options are {sorted(all_sut_keys, key=lambda x:x.lower())}",
-                # )
-                return None
+def find_sut_for_provider(provider: str):
+    registered_sut_keys = set(i[0] for i in SUTS.items())
+    if provider in registered_sut_keys:
+        sut_key = provider
     else:
-        suts = ModelGaugeSut
-    return suts
-
-def _make_llamaguard_model(model_name, provider):
-    """Makes "provided endpoint" for LlamaGuard."""
-    # TODO: Decide if this would be useful somewhere else
-    # NOTE: This should be "find providers ..."
-    sut = find_suts_for_sut_argument([provider.value]).pop()
-    secrets = load_secrets_from_config()
-    sut_instance = SUTS.make_instance(sut.key, secrets=secrets)
-    if provider.value == "llama_guard_together":
-        from modelgauge.annotators.providers.together_provider import TogetherProvider
-
-        secrets = load_secrets_from_config()
-        return TogetherProvider(
-            "annotator", model_name, secrets
+        raise KeyError(
+            f"Unknown key '{provider}'. Valid options are {sorted(registered_sut_keys, key=lambda x:x.lower())}",
         )
-    if provider.value == "llama_guard_mock":
-        from modelgauge.annotators.providers.mock_provider import MockProvider
+    return sut_key
 
-        return MockProvider()
+def _make_llamaguard_model(provider):
+    sut_key = find_sut_for_provider(provider.value)
+    secrets = load_secrets_from_config()
+    sut_instance = SUTS.make_instance(sut_key, secrets=secrets)
     return sut_instance
 
 
