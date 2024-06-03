@@ -7,49 +7,46 @@ from modelgauge.sut_decorator import modelgauge_sut
 from modelgauge.sut_registry import SUTS
 from pydantic import BaseModel
 
-class LogProbs(BaseModel):
-    tokens: List[str]
-    token_logprobs: List[float]
-
-class Choice(BaseModel):
-    text: str
-    logprobs: Optional[LogProbs] = None
-
-class DemoYesNoRequest(BaseModel):
+class LlamaGuardRequest(BaseModel):
     """The behavior of this sut only depends on the Prompt text."""
 
     text: str
 
+class LogProbs(BaseModel):
+    tokens: List[str]
+    token_logprobs: List[float]
 
-class DemoYesNoResponse(BaseModel):
+
+class LlamaGuardResponse(BaseModel):
     """This SUT is only capable of returning text."""
 
-    number_of_words: int
-    text: str
+    class Choice(BaseModel):
+        text: str
+        logprobs: Optional[LogProbs] = None
+
     choices: List[Choice]
 
 
 @modelgauge_sut(capabilities=[AcceptsTextPrompt, AcceptsChatPrompt])
-class DemoYesNoSUT(PromptResponseSUT[DemoYesNoRequest, DemoYesNoResponse]):
-    """This SUT demonstrates the bare minimum behavior of a SUT: Use the input Prompt to determine the response."""
+class LlamaGuardMockSUT(PromptResponseSUT[LlamaGuardRequest, LlamaGuardResponse]):
+    """This SUT provides a mock llama guard for development and testing."""
 
-    def translate_text_prompt(self, prompt: TextPrompt) -> DemoYesNoRequest:
-        return DemoYesNoRequest(text=prompt.text)
+    def translate_text_prompt(self, prompt: TextPrompt) -> LlamaGuardRequest:
+        return LlamaGuardRequest(text=prompt.text)
 
-    def translate_chat_prompt(self, prompt: ChatPrompt) -> DemoYesNoRequest:
-        return DemoYesNoRequest(text=format_chat(prompt))
+    def translate_chat_prompt(self, prompt: ChatPrompt) -> LlamaGuardRequest:
+        return LlamaGuardRequest(text=format_chat(prompt))
 
-    def evaluate(self, request: DemoYesNoRequest) -> DemoYesNoResponse:
-        # Return Yes if the input is an even number of words
-        number_of_words = len(request.text.split())
-        answer = "Yes" if number_of_words % 2 == 0 else "No"
-        return DemoYesNoResponse(number_of_words=number_of_words, text=answer,
-                                 choices=[Choice(text="safe")])
+    def evaluate(self, request: LlamaGuardRequest) -> LlamaGuardResponse:
+        return LlamaGuardResponse(**{"choices": [{"text": "safe"}]})
 
     def translate_response(
-        self, request: DemoYesNoRequest, response: DemoYesNoResponse
+        self, request: LlamaGuardRequest, response: LlamaGuardResponse
     ) -> SUTResponse:
-        return SUTResponse(completions=[SUTCompletion(text=response.text)])
+        completions = []
+        for choice in response.choices:
+            completions.append(SUTCompletion(text=choice.text))
+        return SUTResponse(completions=completions)
 
 
-SUTS.register(DemoYesNoSUT, "llama-guard-2-mock")
+SUTS.register(LlamaGuardMockSUT, "llama-guard-2-mock")
